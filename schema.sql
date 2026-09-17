@@ -67,3 +67,42 @@ CREATE TABLE matchup_entries (
     is_winner BOOLEAN DEFAULT NULL,
     UNIQUE(matchup_id, user_id)
 );
+
+CREATE OR REPLACE FUNCTION settle_game_bets(p_game_id VARCHAR)
+RETURNS VOID AS $$
+DECLARE
+    r_game RECORD;
+    r_bet RECORD;
+    v_home_diff INT;
+BEGIN
+    -- Fetch target game
+    SELECT * INTO r_game FROM games WHERE game_id = p_game_id AND status = 'final';
+    IF NOT FOUND THEN RETURN; END IF;
+
+    v_home_diff := r_game.home_score - r_game.away_score;
+
+    -- Settle Individual Bets
+    FOR r_bet IN SELECT * FROM user_bets WHERE game_id = p_game_id AND status = 'pending' LOOP
+        IF r_bet.market = 'spread' THEN
+            -- Check if selected team was home or away
+            IF r_bet.selected_team = r_game.home_team THEN
+                IF (v_home_diff + r_bet.line) > 0 THEN
+                    UPDATE user_bets SET status = 'won' WHERE bet_id = r_bet.bet_id;
+                ELSIF (v_home_diff + r_bet.line) < 0 THEN
+                    UPDATE user_bets SET status = 'lost' WHERE bet_id = r_bet.bet_id;
+                ELSE
+                    UPDATE user_bets SET status = 'push' WHERE bet_id = r_bet.bet_id;
+                END IF;
+            ELSE -- Away Team
+                IF ((-v_home_diff) + r_bet.line) > 0 THEN
+                    UPDATE user_bets SET status = 'won' WHERE bet_id = r_bet.bet_id;
+                ELSIF ((-v_home_diff) + r_bet.line) < 0 THEN
+                    UPDATE user_bets SET status = 'lost' WHERE bet_id = r_bet.bet_id;
+                ELSE
+                    UPDATE user_bets SET status = 'push' WHERE bet_id = r_bet.bet_id;
+                END IF;
+            END IF;
+        END IF;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
